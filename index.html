@@ -20,13 +20,8 @@
       overflow-x: hidden;
     }
 
-    .spacer-50vh {
-      height: 50vh;
-    }
-
-    .spacer-100vh {
-      height: 100vh;
-    }
+    .spacer-50vh { height: 50vh; }
+    .spacer-100vh { height: 100vh; }
 
     .globe-section {
       position: relative;
@@ -52,7 +47,6 @@
       width: 100%;
       height: 100%;
       display: block;
-      z-index: 0;
       cursor: grab;
     }
 
@@ -61,9 +55,9 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      z-index: 2;
       pointer-events: none;
       text-align: center;
+      z-index: 2;
     }
 
     .fade-mask {
@@ -76,20 +70,14 @@
       z-index: 1;
     }
 
-    h1 {
-      font-size: 2.2rem;
-    }
+    h1 { font-size: 2.2rem; }
 
     @media(min-width: 768px) {
-      h1 {
-        font-size: 3rem;
-      }
+      h1 { font-size: 3rem; }
     }
 
     @media(max-width: 768px) {
-      .overlay h1 {
-        font-size: 1.6rem;
-      }
+      .overlay h1 { font-size: 1.6rem; }
     }
   </style>
 </head>
@@ -111,11 +99,16 @@
 
   <script>
     let scene, camera, renderer, pointCloud;
-    let isDragging = false;
-    let previousMousePosition = { x: 0, y: 0 };
     let rotation = { x: 0, y: 0 };
     let scrollRotationY = 0;
+    let previousMousePosition = { x: 0, y: 0 };
+    let isDragging = false;
+    let positions, colors;
     let globeSize = window.innerWidth <= 768 ? 1.8 : 2.8;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Points.threshold = 0.2;
+    const mouse = new THREE.Vector2();
 
     init();
     animate();
@@ -126,73 +119,12 @@
       camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
       camera.position.z = 4.6;
 
-      renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true });
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
       renderer.setSize(canvas.clientWidth, canvas.clientHeight);
       renderer.setPixelRatio(window.devicePixelRatio);
 
       loadEarthPoints();
-
-      // Mouse drag
-      canvas.addEventListener("mousedown", (event) => {
-        isDragging = true;
-        previousMousePosition = { x: event.clientX, y: event.clientY };
-        canvas.style.cursor = "grabbing";
-      });
-
-      canvas.addEventListener("mouseup", () => {
-        isDragging = false;
-        canvas.style.cursor = "grab";
-      });
-
-      canvas.addEventListener("mouseleave", () => {
-        isDragging = false;
-        canvas.style.cursor = "grab";
-      });
-
-      canvas.addEventListener("mousemove", (event) => {
-        if (!isDragging) return;
-        const deltaX = event.clientX - previousMousePosition.x;
-        const deltaY = event.clientY - previousMousePosition.y;
-        rotation.y += deltaX * 0.005;
-        rotation.x += deltaY * 0.005;
-        previousMousePosition = { x: event.clientX, y: event.clientY };
-      });
-
-      // Touch drag
-      canvas.addEventListener("touchstart", (event) => {
-        if (event.touches.length === 1) {
-          isDragging = true;
-          previousMousePosition = {
-            x: event.touches[0].clientX,
-            y: event.touches[0].clientY,
-          };
-          canvas.style.cursor = "grabbing";
-        }
-      });
-
-      canvas.addEventListener("touchmove", (event) => {
-        if (!isDragging || event.touches.length !== 1) return;
-        const touch = event.touches[0];
-        const deltaX = touch.clientX - previousMousePosition.x;
-        const deltaY = touch.clientY - previousMousePosition.y;
-        rotation.y += deltaX * 0.005;
-        rotation.x += deltaY * 0.005;
-        previousMousePosition = {
-          x: touch.clientX,
-          y: touch.clientY,
-        };
-      });
-
-      canvas.addEventListener("touchend", () => {
-        isDragging = false;
-        canvas.style.cursor = "grab";
-      });
-
-      canvas.addEventListener("touchcancel", () => {
-        isDragging = false;
-        canvas.style.cursor = "grab";
-      });
-
+      handleEvents(canvas);
       window.addEventListener("resize", onResize);
 
       gsap.to({}, {
@@ -201,129 +133,220 @@
           start: "top top",
           end: "bottom bottom",
           scrub: true,
-          onUpdate: (self) => {
-            scrollRotationY = self.progress * Math.PI * 2;
-          }
+          onUpdate: (self) => scrollRotationY = self.progress * Math.PI * 2
         }
       });
+
+      gsap.from("h1", { opacity: 0, y: 30, duration: 1.2, ease: "power2.out" });
     }
 
-function loadEarthPoints() {
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.src = "globe.png";
+    function handleEvents(canvas) {
+      canvas.addEventListener("mousedown", e => {
+        isDragging = true;
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+        canvas.style.cursor = "grabbing";
+      });
 
-  img.onload = () => {
-    const tempCanvas = document.createElement("canvas");
-    const ctx = tempCanvas.getContext("2d");
-    const width = img.width;
-    const height = img.height;
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    ctx.drawImage(img, 0, 0);
-    const imageData = ctx.getImageData(0, 0, width, height).data;
+      canvas.addEventListener("mouseup", () => { isDragging = false; canvas.style.cursor = "grab"; });
+      canvas.addEventListener("mouseleave", () => { isDragging = false; canvas.style.cursor = "grab"; });
 
-    const points = [];
+      canvas.addEventListener("mousemove", e => {
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        if (!isDragging) return;
+        const deltaX = e.clientX - previousMousePosition.x;
+        const deltaY = e.clientY - previousMousePosition.y;
+        rotation.y += deltaX * 0.005;
+        rotation.x += deltaY * 0.005;
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+      });
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const index = (y * width + x) * 4;
-        const r = imageData[index];
-        const g = imageData[index + 1];
-        const b = imageData[index + 2];
-        const brightness = (r + g + b) / 3;
-
-        if (brightness > 128) {
-          const lon = (x / width) * 2 * Math.PI - Math.PI;
-          const lat = (y / height) * Math.PI - Math.PI / 2;
-          const radius = globeSize;
-          const px = radius * Math.cos(lat) * Math.cos(lon);
-          const py = radius * Math.sin(lat);
-          const pz = radius * Math.cos(lat) * Math.sin(lon);
-          points.push(px, py, pz);
+      canvas.addEventListener("touchstart", e => {
+        if (e.touches.length === 1) {
+          isDragging = true;
+          previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          canvas.style.cursor = "grabbing";
         }
-      }
+      });
+
+      canvas.addEventListener("touchmove", e => {
+        if (!isDragging || e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - previousMousePosition.x;
+        const deltaY = touch.clientY - previousMousePosition.y;
+        rotation.y += deltaX * 0.005;
+        rotation.x += deltaY * 0.005;
+        previousMousePosition = { x: touch.clientX, y: touch.clientY };
+      });
+
+      canvas.addEventListener("touchend", () => { isDragging = false; canvas.style.cursor = "grab"; });
+      canvas.addEventListener("touchcancel", () => { isDragging = false; canvas.style.cursor = "grab"; });
     }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    function loadEarthPoints() {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = "earthmap_bw.avif";
+      img.onload = () => {
+        const tempCanvas = document.createElement("canvas");
+        const ctx = tempCanvas.getContext("2d");
+        const { width, height } = img;
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, width, height).data;
 
-    // 👉 Create a soft glowing circle sprite as texture
-    const spriteCanvas = document.createElement("canvas");
-    spriteCanvas.width = 128;
-    spriteCanvas.height = 128;
-    const ctx2 = spriteCanvas.getContext("2d");
-    const gradient = ctx2.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.5, "rgba(255,255,255,0.0001)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
-    ctx2.fillStyle = gradient;
-    ctx2.fillRect(0, 0, 128, 128);
-    const spriteTexture = new THREE.CanvasTexture(spriteCanvas);
+        const points = [], colorArray = [];
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
+            if (brightness > 100) {
+              const lon = (x / width) * 2 * Math.PI - Math.PI;
+              const lat = (y / height) * Math.PI - Math.PI / 2;
+              const r = globeSize;
+              const px = r * Math.cos(lat) * Math.cos(lon);
+              const py = r * Math.sin(lat);
+              const pz = r * Math.cos(lat) * Math.sin(lon);
+              points.push(px, py, pz);
+              colorArray.push(0.57, 0.05, 0.94);
+            }
+          }
+        }
 
-    const material = new THREE.PointsMaterial({
-      size: 0.05,
-      map: spriteTexture,
-      transparent: true,
-      opacity: 1.0,
-      color: "#910cef",
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
+        const geometry = new THREE.BufferGeometry();
+        positions = new Float32Array(points);
+        colors = new Float32Array(colorArray);
+        geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-    pointCloud = new THREE.Points(geometry, material);
-    scene.add(pointCloud);
+        const spriteCanvas = document.createElement("canvas");
+        spriteCanvas.width = spriteCanvas.height = 128;
+        const g = spriteCanvas.getContext("2d");
+        const gradient = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+gradient.addColorStop(0, "rgba(255,255,255,1)");
+gradient.addColorStop(0.2, "rgba(255,255,255,0.4)");
+gradient.addColorStop(0.5, "rgba(255,255,255,0.05)");
+gradient.addColorStop(1, "rgba(255,255,255,0)");
 
-    // ✨ Add faint purple background sphere for "water" areas
-    const backgroundMaterial = new THREE.MeshBasicMaterial({
-    color: "#4c24bc",
-    transparent: true,
-    opacity: 0.2,
-    side: THREE.BackSide,
-    depthWrite: false,
-    });
+        g.fillStyle = gradient;
+        g.fillRect(0, 0, 128, 128);
+        const spriteTexture = new THREE.CanvasTexture(spriteCanvas);
 
-    const backgroundGeometry = new THREE.SphereGeometry(globeSize + 0.01, 64, 64);
-    const backgroundMesh = new THREE.Mesh(backgroundGeometry, backgroundMaterial);
-    scene.add(backgroundMesh);
+        const material = new THREE.PointsMaterial({
+          size: 0.06,
+          map: spriteTexture,
+          transparent: true,
+          vertexColors: true,
+          blending: THREE.NormalBlending,
+          depthWrite: false
+          
+        });
 
-  };
-}
+        if (pointCloud) {
+          scene.remove(pointCloud);
+          pointCloud.geometry.dispose();
+          pointCloud.material.dispose();
+        }
 
+        pointCloud = new THREE.Points(geometry, material);
+        scene.add(pointCloud);
 
-function onResize() {
-  const canvas = document.getElementById("globeCanvas");
-  camera.aspect = canvas.clientWidth / canvas.clientHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        const bgMat = new THREE.MeshBasicMaterial({
+          color: "#4c24bc",
+          transparent: true,
+          opacity: 0.19,
+          side: THREE.BackSide,
+          depthWrite: false
+        });
 
-  // Remove old pointCloud and background
-  if (pointCloud) scene.remove(pointCloud);
-  scene.children = scene.children.filter(obj => obj.type !== "Mesh"); // Removes background sphere
+        const bgGeo = new THREE.SphereGeometry(globeSize + 0.01, 64, 64);
+        const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+        scene.add(bgMesh);
+      };
+    }
 
-  // Update globe size and reload
-  globeSize = window.innerWidth <= 768 ? 2.2 : 2.8;
-  loadEarthPoints();
-}
-
+    function onResize() {
+      const canvas = document.getElementById("globeCanvas");
+      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+      globeSize = window.innerWidth <= 768 ? 2.2 : 3;
+      // Remove previous
+      scene.children = scene.children.filter(obj => {
+        if (obj.isMesh || obj.isPoints) {
+          scene.remove(obj);
+          return false;
+        }
+        return true;
+      });
+      loadEarthPoints();
+    }
 
     function animate() {
       requestAnimationFrame(animate);
-      if (pointCloud) {
-        pointCloud.rotation.y = scrollRotationY + rotation.y;
-        pointCloud.rotation.x = rotation.x;
-        rotation.y += 0.001;
+      if (!pointCloud) return;
+
+      pointCloud.rotation.y = scrollRotationY + rotation.y;
+      pointCloud.rotation.x = rotation.x;
+
+      // Hover glow logic
+      const decay = 0.05, grow = 0.1;
+      raycaster.setFromCamera(mouse, camera);
+
+      if (!pointCloud.geometry.attributes.glowIntensity) {
+        const glow = new Float32Array(positions.length / 3).fill(0);
+        pointCloud.geometry.setAttribute("glowIntensity", new THREE.BufferAttribute(glow, 1));
       }
+
+      const glowAttr = pointCloud.geometry.attributes.glowIntensity;
+      let needsUpdate = false;
+
+      const mouseX = (mouse.x * 0.5 + 0.5) * window.innerWidth;
+      const mouseY = (-mouse.y * 0.5 + 0.5) * window.innerHeight;
+
+      for (let i = 0; i < positions.length; i += 3) {
+        const point = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]).applyEuler(pointCloud.rotation);
+        const screen = point.clone().project(camera);
+        const screenX = (screen.x * 0.5 + 0.5) * window.innerWidth;
+        const screenY = (-screen.y * 0.5 + 0.5) * window.innerHeight;
+
+        const dx = screenX - mouseX;
+        const dy = screenY - mouseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const maxDist = 100;
+        let intensity = Math.max(0, 1 - dist / maxDist);
+
+        const idx = i / 3;
+        let current = glowAttr.array[idx];
+        current = intensity > current
+          ? current + (intensity - current) * grow
+          : current * (1 - decay);
+        glowAttr.array[idx] = current;
+
+        // Color transition
+        const base = [0.3, 0.0, 0.5]; // deeper purple
+        const glow = [1.2, 1.2, 1.2]; // "overbright" white
+
+        const r = base[0] + (glow[0] - base[0]) * current;
+        const g = base[1] + (glow[1] - base[1]) * current;
+        const b = base[2] + (glow[2] - base[2]) * current;
+
+        if (colors[i] !== r || colors[i + 1] !== g || colors[i + 2] !== b) {
+          colors[i] = r;
+          colors[i + 1] = g;
+          colors[i + 2] = b;
+          needsUpdate = true;
+        }
+      }
+
+      if (needsUpdate) pointCloud.geometry.attributes.color.needsUpdate = true;
+
+      rotation.y += 0.001;
       renderer.render(scene, camera);
     }
-
-    gsap.from("h1", {
-      opacity: 0,
-      y: 30,
-      duration: 1.2,
-      ease: "power2.out"
-    });
   </script>
-
 </body>
 </html>
